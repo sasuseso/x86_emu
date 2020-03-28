@@ -1,10 +1,10 @@
 use std::process;
-use super::add;
+use super::add_i2u_32;
 
 #[repr(C)]
 pub union OpcodeOrRgndx {
     pub opcode: u8,
-    reg_idx: u8
+    pub reg_idx: u8
 }
 
 #[repr(C)]
@@ -14,9 +14,9 @@ union Disp {
 }
 
 pub struct ModRM {
-    modu: u8,
+    pub modu: u8,
     pub op_reg: OpcodeOrRgndx,
-    rm: u8,
+    pub rm: u8,
     sib: u8,
     disp: Disp,
 }
@@ -57,7 +57,7 @@ impl super::Emulator {
         }
     }
 
-    pub fn set_rm32(&mut self, modrm: &mut ModRM, val: u32) {
+    pub fn set_rm32(&mut self, modrm: &ModRM, val: u32) {
         if modrm.modu == 3 {
             self.set_register32(modrm.rm, val);
         } else {
@@ -74,8 +74,21 @@ impl super::Emulator {
             self.get_memory32(addr)
         }
     }
+    
+    pub fn get_rm8(&mut self, modrm: &ModRM) -> u8 {
+        if modrm.modu == 3 {
+            self.get_register8(modrm.rm as usize)
+        } else {
+            let addr = self.calc_memory_address(modrm);
+            self.get_memory8(addr) as u8
+        }
+    }
 
-    pub fn set_r32(&mut self, modrm: &mut ModRM, val: u32) {
+    pub fn set_r8(&mut self, modrm: &ModRM, val: u8) {
+        self.set_register8(unsafe { modrm.op_reg.reg_idx } as i32, val)
+    }
+
+    pub fn set_r32(&mut self, modrm: &ModRM, val: u32) {
         self.set_register32(unsafe { modrm.op_reg.reg_idx }, val);
     }
 
@@ -100,7 +113,7 @@ impl super::Emulator {
                         println!("not implemented ModRM mod = 1, rm = 4");
                         process::exit(0);
                 } else {
-                    unsafe { add(self.get_register32(modrm.rm), 
+                    unsafe { add_i2u_32(self.get_register32(modrm.rm), 
                                  modrm.disp.disp8 as i32) }
                 }
             },
@@ -108,6 +121,19 @@ impl super::Emulator {
                 println!("not implemented ModRM mod = 3");
                 process::exit(0);
             }
+        }
+    }
+
+    pub fn get_r8(&mut self, modrm: &ModRM) -> u8 {
+        self.get_register8(unsafe { modrm.op_reg.reg_idx } as usize)
+    }
+
+    pub fn set_rm8(&mut self, modrm: &ModRM, val: u8) {
+        if modrm.modu == 3 {
+            self.set_register8(modrm.rm as i32, val);
+        } else {
+            let addr = self.calc_memory_address(modrm);
+            self.set_memory8(addr, val as u32);
         }
     }
 }

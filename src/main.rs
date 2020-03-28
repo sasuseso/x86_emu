@@ -7,7 +7,14 @@ use x86_emu::emulator;
 const MEM_SIZE: usize = 1024 * 1024;
 
 fn main() {
-    let args: Vec<String> = env::args().collect();
+    let mut args: Vec<String> = env::args().collect();
+    
+    let mut quiet_flag = false;
+
+    if args[1] == "quiet" {
+        quiet_flag = true;
+        args.remove(1);
+    }
 
     if args.len() != 2 {
         println!("usage: px86 filename");
@@ -18,7 +25,7 @@ fn main() {
 
     let f = match File::open(args[1].to_string()) {
         Ok(f) => f,
-        Err(_e) => {
+        Err(_) => {
             println!("cannot open file.");
             process::exit(1);
         }
@@ -33,16 +40,20 @@ fn main() {
 
     let instructions = emu.init_instructions();
 
+    println!();
     while emu.eip < MEM_SIZE as u32 {
         let code = emu.get_code8(0);
 
         if let Some(inst) = instructions[code as usize] {
-            println!("EIP: 0x{:x}, Code: 0x{:x}", emu.eip, code);
+            if !quiet_flag {
+                println!("EIP: {:#06x}, ESP: {:#06x}, Code: {:#02x}",
+                         emu.eip, emu.registers.regs[4], code);
+            }
 
             inst(&mut emu);
 
             if emu.eip == 0x00 {
-                println!("\n\n----End of Program----\n");
+                println!("\n\n--------End of Program--------\n");
                 break;
             }
         } else {
@@ -52,6 +63,15 @@ fn main() {
     }
 
     println!("{}", emu.registers);
+    println!("EIP: {:#010x}", emu.eip);
+
+    for  (a, m) in emu.memory[0x7c00..].iter().enumerate() {
+        print!("{:02x} ", m);
+        if (a+1) % 8 == 0 {
+            println!();
+        }
+    }
+    println!();
 
     process::exit(0);
 }

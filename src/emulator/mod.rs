@@ -4,10 +4,12 @@ use byteorder::{LittleEndian, ReadBytesExt, WriteBytesExt};
 
 mod modrm;
 mod instructions;
+mod io_func;
+mod bios;
 
 #[derive(Copy, Debug, Default, Clone)]
 pub struct Regs32 {
-    regs: [u32; 8]
+    pub regs: [u32; 8]
 }
 
 impl Regs32 {
@@ -21,17 +23,46 @@ impl Regs32 {
 impl fmt::Display for Regs32 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f,
-        "EAX: 0x{:x}\n\
-        ECX: 0x{:x}\n\
-        EDX: 0x{:x}\n\
-        EBX: 0x{:x}\n\
-        ESP: 0x{:x}\n\
-        EBP: 0x{:x}\n\
-        ESI: 0x{:x}\n\
-        EDI: 0x{:x}",
+        "EAX: {:#010x}\n\
+        ECX: {:#010x}\n\
+        EDX: {:#010x}\n\
+        EBX: {:#010x}\n\
+        ESP: {:#010x}\n\
+        EBP: {:#010x}\n\
+        ESI: {:#010x}\n\
+        EDI: {:#010x}",
         self.regs[0], self.regs[1], self.regs[2], self.regs[3],
         self.regs[4], self.regs[5], self.regs[6], self.regs[7])
     }
+}
+
+enum RegIdx {
+    Eax = 0,
+    Ecx = 1,
+    Edx = 2,
+    Ebx = 3,
+    Esp = 4,
+    Ebp = 5,
+    Esi = 6,
+    Edi = 7,
+}
+
+impl RegIdx {
+    pub fn al() -> usize { Self::Eax as usize }
+    pub fn cl() -> usize { Self::Ecx as usize }
+    pub fn bl() -> usize { Self::Ebx as usize }
+    pub fn dl() -> usize { Self::Edx as usize }
+    pub fn ah() -> usize { Self::al() + 4 }
+    pub fn ch() -> usize { Self::cl() + 4 }
+    pub fn dh() -> usize { Self::dl() + 4 }
+    pub fn bh() -> usize { Self::bl() + 4 }
+}
+
+enum Eflags {
+    Carry,
+    Zero,
+    Sign,
+    Overflow
 }
 
 #[derive(Debug, Default, Clone)]
@@ -99,9 +130,74 @@ impl Emulator {
         (&(self.memory[addr as usize..]))
             .read_u32::<LittleEndian>().unwrap()
     }
+
+    pub fn push32(&mut self, val: u32) {
+        let addr = self.get_register32(4) - 4; // registers.regs[4] = ESP
+        self.set_register32(4, addr);
+        self.set_memory32(addr, val);
+    }
+
+    pub fn pop32(&mut self) -> u32 {
+        let addr = self.get_register32(4);
+        let ret = self.get_memory32(addr);
+        self.set_register32(4, addr + 4);
+        ret
+    }
+
+    fn update_eflags_sub(&mut self, v1: u32, v2: u32, res: u64) {
+        let sign1 = v1 >> 31;
+        let sign2 = v2 >> 31;
+        let signr = (res >> 31) & 1;
+
+        self.set_eflags(Eflags::Carry, (res >> 32) != 0);
+        self.set_eflags(Eflags::Zero, res == 0);
+        self.set_eflags(Eflags::Sign, signr != 0);
+        self.set_eflags(Eflags::Overflow, sign1 != sign2 && sign1 != signr as u32);
+    }
+
+    fn set_eflags(&mut self, which_bit: Eflags, new_flag: bool) {
+        let flag = match which_bit {
+            Eflags::Carry => 1,
+            Eflags::Zero => 1 << 6,
+            Eflags::Sign => 1 << 7,
+            Eflags::Overflow => 1 << 11,
+        };
+        if new_flag {
+            self.eflags |= flag;
+        } else {
+            self.eflags &= !flag;
+        }
+    }
+
+    fn check_eflag(&self, eflag: Eflags) -> bool {
+        match eflag {
+            Eflags::Carry => (self.eflags & 1) != 0,
+            Eflags::Zero => (self.eflags & (1 << 6)) != 0,
+            Eflags::Sign => (self.eflags & (1 << 7)) != 0,
+            Eflags::Overflow => (self.eflags & (1 << 11)) != 0,
+        }
+    }
+
+    fn get_register8(&mut self, idx: usize) -> u8 {
+        if idx < 4 {
+            (self.registers.regs[idx] & 0xff) as u8
+        } else {
+            ((self.registers.regs[idx - 4] >> 8) & 0xff) as u8
+        }
+    }
+
+    fn set_register8(&mut self, idx: i32, val: u8) {
+        if idx < 4 {
+            let r = self.registers.regs[idx as usize] & 0xffffff00;
+            self.registers.regs[idx as usize] = r | (val as u32);
+        } else {
+            let r = self.registers.regs[idx as usize - 4] & 0xffff00ff;
+            self.registers.regs[idx as usize - 4] = r | ((val as u32) << 8);
+        }
+    }
 }
 
-fn add(a: u32, b: i32) -> u32 {
+fn add_i2u_32(a: u32, b: i32) -> u32 {
     if b.is_negative() {
         a - b.wrapping_abs() as u32
     } else {
